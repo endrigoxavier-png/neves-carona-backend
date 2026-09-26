@@ -5,5 +5,15 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "typescript": "^5.5.2"
   }
 }
