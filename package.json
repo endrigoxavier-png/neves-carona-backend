@@ -1,21 +1,9 @@
 {
   "name": "neves-carona-backend",
   "version": "1.0.0",
-  "type": "module",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js"
-  },
-  "dependencies": {
-    "@fastify/cors": "^11.3.0",
-    "@supabase/supabase-js": "^2.117.2",
-    "dotenv": "^18.0.4",
-    "fastify": "^5.12.5"
-  },
-  "devDependencies": {
-    "@types/node": "^26.6.3",
-    "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
   }
 }
