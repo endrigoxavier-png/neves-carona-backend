@@ -1,141 +1,136 @@
 import Fastify from 'fastify';
-import cors from '@fastify/cors';
-import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = Fastify({ logger: true });
 
-// Configurar CORS
-app.register(cors, {
-  origin: '*',
-});
+// Memória temporária de estados dos usuários (Sessão por WhatsApp ID)
+// Em produção avançada, isso pode ser armazenado no Supabase
+const userSessions: Record<string, { step: string; data?: any }> = {};
 
-// Inicializar Supabase
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_KEY || '';
-export const supabase = createClient(supabaseUrl, supabaseKey);
-
-// Rota raiz de teste
-app.get('/', async (request, reply) => {
-  return { status: 'online', message: 'NEVES CARONA Backend API' };
-});
-
-/**
- * Função para enviar mensagem via Meta WhatsApp Graph API
- */
-async function sendWhatsAppMessage(to: string, bodyText: string) {
-  const phoneNumberId = process.env.META_PHONE_NUMBER_ID;
-  const whatsappToken = process.env.META_WHATSAPP_TOKEN;
-
-  if (!phoneNumberId || !whatsappToken) {
-    console.error('ERRO: META_PHONE_NUMBER_ID ou META_WHATSAPP_TOKEN não estão configurados nas variáveis de ambiente.');
-    return;
-  }
-
-  const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${whatsappToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: to,
-        type: 'text',
-        text: {
-          preview_url: false,
-          body: bodyText,
-        },
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Erro ao enviar mensagem pelo WhatsApp Graph API:', data);
-    } else {
-      console.log('Mensagem enviada com sucesso para:', to);
-    }
-  } catch (error) {
-    console.error('Falha na requisição para a Graph API:', error);
-  }
+// Função auxiliar para enviar mensagem via WhatsApp Graph API
+async function sendWhatsAppMessage(to: string, text: string) {
+  const url = `https://graph.facebook.com/v20.0/${process.env.META_PHONE_NUMBER_ID}/messages`;
+  
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.META_WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to: to,
+      type: 'text',
+      text: { body: text },
+    }),
+  });
 }
 
-/**
- * WEBHOOK META WHATSAPP - VALIDAÇÃO (GET)
- */
+// ROTA GET: Validação do Webhook com a Meta
 app.get('/webhook', async (request, reply) => {
-  const query = request.query as Record<string, string>;
-  const mode = query['hub.mode'];
-  const token = query['hub.verify_token'];
-  const challenge = query['hub.challenge'];
+  const mode = (request.query as any)['hub.mode'];
+  const token = (request.query as any)['hub.verify_token'];
+  const challenge = (request.query as any)['hub.challenge'];
 
-  const verifyToken = process.env.META_VERIFY_TOKEN;
-
-  if (mode === 'subscribe' && token === verifyToken) {
-    app.log.info('Webhook verificado com sucesso pela Meta!');
+  if (mode === 'subscribe' && token === process.env.META_VERIFY_TOKEN) {
     return reply.status(200).send(challenge);
-  } else {
-    app.log.warn('Falha na verificação do Webhook: Token inválido');
-    return reply.status(403).send('Forbidden');
   }
+  return reply.status(403).send('Forbidden');
 });
 
-/**
- * WEBHOOK META WHATSAPP - RECEBER MENSAGENS (POST)
- */
+// ROTA POST: Recebimento e Tráfego de Mensagens
 app.post('/webhook', async (request, reply) => {
   const body = request.body as any;
 
   try {
-    if (body.object === 'whatsapp_business_account') {
-      const entry = body.entry?.[0];
-      const changes = entry?.changes?.[0];
-      const value = changes?.value;
-      const message = value?.messages?.[0];
+    const entry = body?.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const message = value?.messages?.[0];
 
-      if (message) {
-        const from = message.from; // Número de quem enviou a mensagem
-        const text = message.text?.body; // Conteúdo da mensagem
+    if (message) {
+      const from = message.from; // Número do usuário (ex: 5517981110488)
+      const text = message.text?.body?.trim().toLowerCase(); // Texto enviado pelo usuário
 
-        app.log.info(`Mensagem recebida de ${from}: ${text}`);
+      // Busca ou inicializa o estado do usuário
+      const currentSession = userSessions[from] || { step: 'IDLE' };
 
-        // Texto do Menu Inicial
-        const menuInicial = 
-`🚗 Olá! Bem-vindo ao CARONA!
-
+      // LOGICA DE ROTEAMENTO DO MENU
+      if (text === 'oi' || text === 'ola' || text === 'menu' || currentSession.step === 'IDLE') {
+        userSessions[from] = { step: 'MAIN_MENU' };
+        
+        const menuText = 
+`🚗 *Olá! Bem-vindo ao CARONA!*
 Viagem dividida, economia garantida.
 
 Como posso ajudar?
-
 1️⃣ Encontrar uma viagem
 2️⃣ Oferecer uma viagem
 3️⃣ Minhas viagens
 4️⃣ Meu cadastro
-5️⃣ Como funciona`;
+5️⃣ Como funciona
 
-        // Dispara a resposta automática
-        await sendWhatsAppMessage(from, menuInicial);
+_Responda com o número da opção desejada._`;
+
+        await sendWhatsAppMessage(from, menuText);
+      } 
+      else if (currentSession.step === 'MAIN_MENU') {
+        switch (text) {
+          case '1':
+            userSessions[from] = { step: 'SEARCH_RIDE' };
+            await sendWhatsAppMessage(from, '🔍 *Encontrar uma viagem*\n\nPara qual cidade você deseja ir?\n1️⃣ São José do Rio Preto\n2️⃣ Mirassol\n3️⃣ Neves Paulista');
+            break;
+
+          case '2':
+            userSessions[from] = { step: 'OFFER_RIDE_DESTINATION' };
+            await sendWhatsAppMessage(from, '🚗 *Oferecer uma viagem*\n\nQual será o seu *destino*?\n1️⃣ São José do Rio Preto\n2️⃣ Mirassol\n3️⃣ Neves Paulista\n4️⃣ Outro');
+            break;
+
+          case '3':
+            await sendWhatsAppMessage(from, '📋 *Minhas viagens*\n\nVocê ainda não possui viagens agendadas.\n\nDigite *Oi* para voltar ao menu.');
+            userSessions[from] = { step: 'IDLE' };
+            break;
+
+          case '4':
+            await sendWhatsAppMessage(from, '👤 *Meu cadastro*\n\nSeu número cadastrado é: ' + from + '\n\nDigite *Oi* para voltar ao menu.');
+            userSessions[from] = { step: 'IDLE' };
+            break;
+
+          case '5':
+            await sendWhatsAppMessage(from, '❓ *Como funciona*\n\nO CARONA conecta motoristas com lugares vagos a passageiros que vão para o mesmo destino!\n\nDigite *Oi* para voltar ao menu.');
+            userSessions[from] = { step: 'IDLE' };
+            break;
+
+          default:
+            await sendWhatsAppMessage(from, '⚠️ Opção inválida. Por favor, responda com um número de *1 a 5*.');
+            break;
+        }
+      } 
+      else if (currentSession.step === 'OFFER_RIDE_DESTINATION') {
+        // Exemplo da próxima etapa após o usuário escolher a opção 2
+        userSessions[from] = { step: 'OFFER_RIDE_DATE', data: { destination: text } };
+        await sendWhatsAppMessage(from, '📅 Perfeito! Qual a *data* da viagem? (Exemplo: DD/MM)');
+      }
+      else {
+        // Caso o usuário mande algo fora do fluxo, reseta para o menu
+        userSessions[from] = { step: 'MAIN_MENU' };
+        await sendWhatsAppMessage(from, 'Digite *Oi* para ver as opções do menu.');
       }
     }
 
-    return reply.status(200).send('EVENT_RECEIVED');
+    return reply.status(200).send({ status: 'ok' });
   } catch (error) {
-    app.log.error(error, 'Erro ao processar mensagem do Webhook');
-    return reply.status(200).send('EVENT_RECEIVED');
+    console.error('Erro no processamento do webhook:', error);
+    return reply.status(200).send({ status: 'error_logged' });
   }
 });
 
-// Inicializar o servidor
 const start = async () => {
   try {
     const port = Number(process.env.PORT) || 3000;
-    const host = '0.0.0.0';
-
-    await app.listen({ port, host });
+    await app.listen({ port, host: '0.0.0.0' });
     console.log(`Servidor rodando na porta ${port}`);
   } catch (err) {
     app.log.error(err);
