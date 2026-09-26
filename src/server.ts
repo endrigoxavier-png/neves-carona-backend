@@ -5,11 +5,9 @@ dotenv.config();
 
 const app = Fastify({ logger: true });
 
-// Memória temporária de estados dos usuários (Sessão por WhatsApp ID)
-// Em produção avançada, isso pode ser armazenado no Supabase
+// Memória temporária de estados dos usuários
 const userSessions: Record<string, { step: string; data?: any }> = {};
 
-// Função auxiliar para enviar mensagem via WhatsApp Graph API
 async function sendWhatsAppMessage(to: string, text: string) {
   const url = `https://graph.facebook.com/v20.0/${process.env.META_PHONE_NUMBER_ID}/messages`;
   
@@ -28,7 +26,6 @@ async function sendWhatsAppMessage(to: string, text: string) {
   });
 }
 
-// ROTA GET: Validação do Webhook com a Meta
 app.get('/webhook', async (request, reply) => {
   const mode = (request.query as any)['hub.mode'];
   const token = (request.query as any)['hub.verify_token'];
@@ -40,7 +37,6 @@ app.get('/webhook', async (request, reply) => {
   return reply.status(403).send('Forbidden');
 });
 
-// ROTA POST: Recebimento e Tráfego de Mensagens
 app.post('/webhook', async (request, reply) => {
   const body = request.body as any;
 
@@ -51,14 +47,14 @@ app.post('/webhook', async (request, reply) => {
     const message = value?.messages?.[0];
 
     if (message) {
-      const from = message.from; // Número do usuário (ex: 5517981110488)
-      const text = message.text?.body?.trim().toLowerCase(); // Texto enviado pelo usuário
+      const from = message.from;
+      const text = message.text?.body?.trim().toLowerCase();
 
-      // Busca ou inicializa o estado do usuário
-      const currentSession = userSessions[from] || { step: 'IDLE' };
+      // Recupera a sessão atual (padrão 'MAIN_MENU' se não existir)
+      const currentSession = userSessions[from] || { step: 'MAIN_MENU' };
 
-      // LOGICA DE ROTEAMENTO DO MENU
-      if (text === 'oi' || text === 'ola' || text === 'menu' || currentSession.step === 'IDLE') {
+      // Se o usuário digitar explicitamente "oi", "ola" ou "menu", força a exibição do menu inicial
+      if (text === 'oi' || text === 'ola' || text === 'menu') {
         userSessions[from] = { step: 'MAIN_MENU' };
         
         const menuText = 
@@ -75,8 +71,11 @@ Como posso ajudar?
 _Responda com o número da opção desejada._`;
 
         await sendWhatsAppMessage(from, menuText);
-      } 
-      else if (currentSession.step === 'MAIN_MENU') {
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      // TRATAMENTO DAS OPÇÕES DO MENU PRINCIPAL
+      if (currentSession.step === 'MAIN_MENU') {
         switch (text) {
           case '1':
             userSessions[from] = { step: 'SEARCH_RIDE' };
@@ -90,31 +89,26 @@ _Responda com o número da opção desejada._`;
 
           case '3':
             await sendWhatsAppMessage(from, '📋 *Minhas viagens*\n\nVocê ainda não possui viagens agendadas.\n\nDigite *Oi* para voltar ao menu.');
-            userSessions[from] = { step: 'IDLE' };
             break;
 
           case '4':
             await sendWhatsAppMessage(from, '👤 *Meu cadastro*\n\nSeu número cadastrado é: ' + from + '\n\nDigite *Oi* para voltar ao menu.');
-            userSessions[from] = { step: 'IDLE' };
             break;
 
           case '5':
             await sendWhatsAppMessage(from, '❓ *Como funciona*\n\nO CARONA conecta motoristas com lugares vagos a passageiros que vão para o mesmo destino!\n\nDigite *Oi* para voltar ao menu.');
-            userSessions[from] = { step: 'IDLE' };
             break;
 
           default:
-            await sendWhatsAppMessage(from, '⚠️ Opção inválida. Por favor, responda com um número de *1 a 5*.');
+            await sendWhatsAppMessage(from, '⚠️ Opção inválida. Por favor, escolha um número de *1 a 5* ou envie *Oi* para recarregar o menu.');
             break;
         }
       } 
       else if (currentSession.step === 'OFFER_RIDE_DESTINATION') {
-        // Exemplo da próxima etapa após o usuário escolher a opção 2
         userSessions[from] = { step: 'OFFER_RIDE_DATE', data: { destination: text } };
-        await sendWhatsAppMessage(from, '📅 Perfeito! Qual a *data* da viagem? (Exemplo: DD/MM)');
+        await sendWhatsAppMessage(from, '📅 Perfeito! Qual a *data* da viagem? (Exemplo: 29/09)');
       }
       else {
-        // Caso o usuário mande algo fora do fluxo, reseta para o menu
         userSessions[from] = { step: 'MAIN_MENU' };
         await sendWhatsAppMessage(from, 'Digite *Oi* para ver as opções do menu.');
       }
@@ -122,8 +116,8 @@ _Responda com o número da opção desejada._`;
 
     return reply.status(200).send({ status: 'ok' });
   } catch (error) {
-    console.error('Erro no processamento do webhook:', error);
-    return reply.status(200).send({ status: 'error_logged' });
+    console.error('Erro no webhook:', error);
+    return reply.status(200).send({ status: 'error' });
   }
 });
 
