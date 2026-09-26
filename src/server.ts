@@ -20,8 +20,52 @@ app.get('/', async (request, reply) => {
 });
 
 /**
+ * Função para enviar mensagem via Meta WhatsApp Graph API
+ */
+async function sendWhatsAppMessage(to: string, bodyText: string) {
+  const phoneNumberId = process.env.META_PHONE_NUMBER_ID;
+  const whatsappToken = process.env.META_WHATSAPP_TOKEN;
+
+  if (!phoneNumberId || !whatsappToken) {
+    console.error('ERRO: META_PHONE_NUMBER_ID ou META_WHATSAPP_TOKEN não estão configurados nas variáveis de ambiente.');
+    return;
+  }
+
+  const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${whatsappToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'text',
+        text: {
+          preview_url: false,
+          body: bodyText,
+        },
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('Erro ao enviar mensagem pelo WhatsApp Graph API:', data);
+    } else {
+      console.log('Mensagem enviada com sucesso para:', to);
+    }
+  } catch (error) {
+    console.error('Falha na requisição para a Graph API:', error);
+  }
+}
+
+/**
  * WEBHOOK META WHATSAPP - VALIDAÇÃO (GET)
- * Esta rota é chamada pela Meta para validar o Webhook.
  */
 app.get('/webhook', async (request, reply) => {
   const query = request.query as Record<string, string>;
@@ -42,7 +86,6 @@ app.get('/webhook', async (request, reply) => {
 
 /**
  * WEBHOOK META WHATSAPP - RECEBER MENSAGENS (POST)
- * Esta rota recebe os eventos e mensagens enviadas pelos utilizadores no WhatsApp.
  */
 app.post('/webhook', async (request, reply) => {
   const body = request.body as any;
@@ -55,24 +98,38 @@ app.post('/webhook', async (request, reply) => {
       const message = value?.messages?.[0];
 
       if (message) {
-        const from = message.from; // Número de quem enviou
-        const text = message.text?.body; // Texto da mensagem
+        const from = message.from; // Número de quem enviou a mensagem
+        const text = message.text?.body; // Conteúdo da mensagem
 
         app.log.info(`Mensagem recebida de ${from}: ${text}`);
 
-        // Aqui podes adicionar a lógica para guardar na base de dados Supabase ou responder
+        // Texto do Menu Inicial
+        const menuInicial = 
+`🚗 Olá! Bem-vindo ao CARONA!
+
+Viagem dividida, economia garantida.
+
+Como posso ajudar?
+
+1️⃣ Encontrar uma viagem
+2️⃣ Oferecer uma viagem
+3️⃣ Minhas viagens
+4️⃣ Meu cadastro
+5️⃣ Como funciona`;
+
+        // Dispara a resposta automática
+        await sendWhatsAppMessage(from, menuInicial);
       }
     }
 
-    // Responder 200 OK para a Meta saber que o evento foi recebido
     return reply.status(200).send('EVENT_RECEIVED');
   } catch (error) {
     app.log.error(error, 'Erro ao processar mensagem do Webhook');
-    return reply.status(200).send('EVENT_RECEIVED'); // Responde 200 para evitar retentativas em loop da Meta
+    return reply.status(200).send('EVENT_RECEIVED');
   }
 });
 
-// Inicializar o servidor na porta do ambiente (Render) ou 3000
+// Inicializar o servidor
 const start = async () => {
   try {
     const port = Number(process.env.PORT) || 3000;
